@@ -1,91 +1,86 @@
 #!/usr/bin/env python3
-"""Dad Joke Showdown — a dad names the Wi-Fi "404 Not Found".
+"""Dad Joke Showdown entry.
 
-Writes a single dad joke (max 200 chars) to
-$MAKEFUN_OUTPUT_DIR/entry.txt (default: out/), then verifies the written
-file byte-for-byte: identical bytes, valid UTF-8, 1-200 chars, non-blank,
-no leading/trailing whitespace, and exactly one sentence.
+Writes one dad joke to the make.fun output file, after checking the
+joke against the competition's shape rules, then proves the file on
+disk holds exactly the bytes that were meant to be written.
 """
 
 import os
+import re
 import sys
 
-SENTENCE = (
-    "Dad named our Wi-Fi '404 Not Found' \u2014 now every guest asks "
-    "for the password, and he just smiles and says, 'Exactly.'"
-)
 
-# The em dash above is U+2014. Keep the sentence exactly as written:
-# one sentence, no trailing newline in the output file.
-# Wording notes (graded 2026-11-24 vs dad-joke rubric): "just smiles
-# and says" (revised from "just says") adds the straight-faced delivery
-# beat before the payoff "'Exactly.'" lands on the last word.
+JOKE = "Dad named our Wi-Fi '404 Not Found' — now every guest asks for the password, and he just smiles and says, 'Exactly.'"
+
+MAX_CHARS = 200
 
 
-def main() -> int:
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "out")
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, "entry.txt")
-
-    data = SENTENCE.encode("utf-8")
-    with open(path, "wb") as fh:
-        fh.write(data)
-
-    # --- Verification: read the file back and check it byte-for-byte. ---
-    with open(path, "rb") as fh:
-        written = fh.read()
-
-    if written != data:
-        print("FAIL: entry.txt bytes differ from the sentence", file=sys.stderr)
-        return 1
-
-    try:
-        text = written.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        print(f"FAIL: entry.txt is not valid UTF-8: {exc}", file=sys.stderr)
-        return 1
-
-    if text != SENTENCE:
-        print("FAIL: decoded text differs from the sentence", file=sys.stderr)
-        return 1
-
-    if not 1 <= len(text) <= 200:
-        print(f"FAIL: length {len(text)} chars is outside 1-200", file=sys.stderr)
-        return 1
-
-    if not text.strip():
-        print("FAIL: entry is blank", file=sys.stderr)
-        return 1
-
+def problems_with(text):
+    """Return a list of every rule the text breaks (empty means it passes)."""
+    found = []
+    if not text:
+        found.append("line is empty")
     if text != text.strip():
-        print("FAIL: entry has leading or trailing whitespace", file=sys.stderr)
-        return 1
-
+        found.append("leading or trailing whitespace")
     if "\n" in text or "\r" in text:
-        print("FAIL: entry must be a single line with no newline characters",
-              file=sys.stderr)
+        found.append("contains a newline character")
+    if len(text) > MAX_CHARS:
+        found.append(f"too long: {len(text)} chars, limit {MAX_CHARS}")
+    if "?" in text or "!" in text:
+        found.append("contains ? or !")
+    if "  " in text:
+        found.append("contains a double space")
+    if re.search(r"\.\s+\S", text):
+        found.append("more than one sentence")
+    tail = text.rstrip("'\"")
+    if not tail.endswith("."):
+        found.append("does not end with a period")
+    return found
+
+
+def pick_destination():
+    """Choose where entry.txt goes, honouring MAKEFUN_OUTPUT_DIR."""
+    wanted = os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
+    try:
+        os.makedirs(wanted, exist_ok=True)
+        probe = os.path.join(wanted, ".writable-check")
+        with open(probe, "w", encoding="utf-8") as handle:
+            handle.write("ok")
+        os.remove(probe)
+        return os.path.join(wanted, "entry.txt")
+    except OSError:
+        fallback = os.path.join("out")
+        os.makedirs(fallback, exist_ok=True)
+        return os.path.join(fallback, "entry.txt")
+
+
+def main():
+    issues = problems_with(JOKE)
+    if issues:
+        for issue in issues:
+            print(f"self-check failed: {issue}", file=sys.stderr)
         return 1
 
-    if written.endswith(b"\n"):
-        print("FAIL: entry.txt must not end with a trailing newline",
-              file=sys.stderr)
+    payload = JOKE.encode("utf-8")
+    target = pick_destination()
+    try:
+        with open(target, "wb") as handle:
+            handle.write(payload)
+        with open(target, "rb") as handle:
+            on_disk = handle.read()
+    except OSError as exc:
+        print(f"could not write or re-read {target}: {exc}", file=sys.stderr)
         return 1
 
-    # Exactly one sentence: count sentence terminators.
-    terminators = sum(text.count(mark) for mark in ".!?")
-    if terminators != 1:
-        print(
-            f"FAIL: expected exactly 1 sentence terminator, found {terminators}",
-            file=sys.stderr,
-        )
+    if on_disk != payload:
+        print("verification failed: file bytes differ from the joke", file=sys.stderr)
         return 1
 
-    if not text.rstrip("'\"").endswith("."):
-        print("FAIL: entry must end with a period (allowing a closing quote)",
-              file=sys.stderr)
-        return 1
-
-    print(f"OK: wrote {path} ({len(data)} bytes, {len(text)} chars)")
+    print(f"Wrote entry to {target}")
+    print(f"Characters: {len(JOKE)}")
+    print(f"Bytes: {len(payload)}")
+    print(f"Line: {JOKE}")
     return 0
 
 
